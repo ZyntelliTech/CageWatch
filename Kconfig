@@ -23,7 +23,12 @@ config AWS_IOT_SAMPLE_DEVICE_ID_USE_HW_ID
 	select HW_ID_LIBRARY
 	help
 	  Use the devices's hardware ID as device ID when connecting to AWS IOT
-
+config FIRMWARE_VERSION
+	string "firmware version"
+	default "1.0"
+config HARDWARE_VERSION
+	string "hardwware version"
+	default ""
 module = AWS_IOT_SAMPLE
 module-str = AWS IoT sample
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

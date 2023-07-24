@@ -81,7 +81,8 @@ static int publish_func(bool version_number_include)
 	char *message;
 	int64_t message_ts = 0;
 	int16_t bat_voltage = 0;
-
+	uint64_t imei = 0;
+	int16_t rssi = 0;
 	err = date_time_now(&message_ts);
 	if (err) {
 		LOG_ERR("date_time_now, error: %d", err);
@@ -92,33 +93,49 @@ static int publish_func(bool version_number_include)
 	/* Request battery voltage data from the modem. */
 	err = modem_info_short_get(MODEM_INFO_BATTERY, &bat_voltage);
 	if (err != sizeof(bat_voltage)) {
-		LOG_ERR("modem_info_short_get, error: %d", err);
+		LOG_ERR("modem_info_short_get for battery voltage, error: %d", err);
+		return err;
+	}
+	err = modem_info_short_get(MODEM_INFO_IMEI, &imei);
+	if (err != sizeof(imei)) {
+		LOG_ERR("modem_info_short_get for IMEI, error: %d", err);
+		return err;
+	}
+	err = modem_info_short_get(MODEM_INFO_RSRP, &rssi);
+	if (err != sizeof(rssi)) {
+		LOG_ERR("modem_info_short_get for RSSI, error: %d", err);
 		return err;
 	}
 #endif
 
 	cJSON *root_obj = cJSON_CreateObject();
-	cJSON *state_obj = cJSON_CreateObject();
-	cJSON *reported_obj = cJSON_CreateObject();
+	cJSON *imei_obj = cJSON_CreateObject();
+	cJSON *firmware_obj = cJSON_CreateObject();
+	cJSON *hardware_obj = cJSON_CreateObject();
+	cJSON *battery_obj = cJSON_CreateObject();
+	cJSON *rssi_obj = cJSON_CreateObject();
 
-	if (root_obj == NULL || state_obj == NULL || reported_obj == NULL) {
-		cJSON_Delete(root_obj);
-		cJSON_Delete(state_obj);
-		cJSON_Delete(reported_obj);
+	if (root_obj == NULL || imei_obj == NULL || firmware_obj == NULL || hardware_obj == NULL || battery_obj == NULL || rssi_obj == NULL) {
+		cJSON_Delete(imei_obj);
+		cJSON_Delete(firmware_obj);
+		cJSON_Delete(hardware_obj);
+		cJSON_Delete(battery_obj);
+		cJSON_Delete(rssi_obj);
 		err = -ENOMEM;
 		return err;
 	}
 
-	if (version_number_include) {
-		err = json_add_str(reported_obj, "app_version", CONFIG_AWS_IOT_SAMPLE_APP_VERSION);
-	} else {
-		err = 0;
-	}
+	err += json_add_number(imei_obj, "imei", imei);
+	err = json_add_str(firmware_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
+	err += json_add_str(hardware_obj, "hardware_version", CONFIG_HARDWARE_VERSION);
+	err += json_add_number(battery_obj, "battery_voltage", bat_voltage);
+	err += json_add_number(rssi_obj, "cellular_rssi", rssi);
 
-	err += json_add_number(reported_obj, "batv", bat_voltage);
-	err += json_add_number(reported_obj, "ts", message_ts);
-	err += json_add_obj(state_obj, "reported", reported_obj);
-	err += json_add_obj(root_obj, "state", state_obj);
+	err += json_add_obj(root_obj, "", imei_obj);
+	err += json_add_obj(root_obj, "", firmware_obj);
+	err += json_add_obj(root_obj, "", hardware_obj);
+	err += json_add_obj(root_obj, "", battery_obj);
+	err += json_add_obj(root_obj, "", rssi_obj);
 
 	if (err) {
 		LOG_ERR("json_add, error: %d", err);
