@@ -125,17 +125,11 @@ static int publish_func(bool version_number_include)
 		return err;
 	}
 
-	err += json_add_number(imei_obj, "imei", imei);
-	err = json_add_str(firmware_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
-	err += json_add_str(hardware_obj, "hardware_version", CONFIG_HARDWARE_VERSION);
-	err += json_add_number(battery_obj, "battery_voltage", bat_voltage);
-	err += json_add_number(rssi_obj, "cellular_rssi", rssi);
-
-	err += json_add_obj(root_obj, "", imei_obj);
-	err += json_add_obj(root_obj, "", firmware_obj);
-	err += json_add_obj(root_obj, "", hardware_obj);
-	err += json_add_obj(root_obj, "", battery_obj);
-	err += json_add_obj(root_obj, "", rssi_obj);
+	err += json_add_number(root_obj, "imei", imei);
+	err = json_add_str(root_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
+	err += json_add_str(root_obj, "hardware_version", CONFIG_HARDWARE_VERSION);
+	err += json_add_number(root_obj, "battery_voltage", bat_voltage);
+	err += json_add_number(root_obj, "cellular_rssi", rssi);
 
 	if (err) {
 		LOG_ERR("json_add, error: %d", err);
