@@ -81,7 +81,7 @@ static int publish_func(bool version_number_include)
 	char *message;
 	int64_t message_ts = 0;
 	int16_t bat_voltage = 0;
-	uint64_t imei = 0;
+	char imei[15];
 	int16_t rssi = 0;
 	err = date_time_now(&message_ts);
 	if (err) {
@@ -96,7 +96,7 @@ static int publish_func(bool version_number_include)
 		LOG_ERR("modem_info_short_get for battery voltage, error: %d", err);
 		return err;
 	}
-	err = modem_info_short_get(MODEM_INFO_IMEI, &imei);
+	err = modem_info_string_get(MODEM_INFO_IMEI, imei, 15);
 	if (err != sizeof(imei)) {
 		LOG_ERR("modem_info_short_get for IMEI, error: %d", err);
 		return err;
@@ -125,7 +125,7 @@ static int publish_func(bool version_number_include)
 		return err;
 	}
 
-	err += json_add_number(root_obj, "imei", imei);
+	err += json_add_str(root_obj, "imei", imei);
 	err = json_add_str(root_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
 	err += json_add_str(root_obj, "hardware_version", CONFIG_HARDWARE_VERSION);
 	err += json_add_number(root_obj, "battery_voltage", bat_voltage);
