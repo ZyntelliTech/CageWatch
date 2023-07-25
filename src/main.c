@@ -81,7 +81,7 @@ static int publish_func(bool version_number_include)
 	char *message;
 	int64_t message_ts = 0;
 	int16_t bat_voltage = 0;
-	char imei[15];
+	char imei[16];
 	int16_t rssi = 0;
 	err = date_time_now(&message_ts);
 	if (err) {
@@ -96,9 +96,9 @@ static int publish_func(bool version_number_include)
 		LOG_ERR("modem_info_short_get for battery voltage, error: %d", err);
 		return err;
 	}
-	err = modem_info_string_get(MODEM_INFO_IMEI, imei, 15);
-	if (err != sizeof(imei)) {
-		LOG_ERR("modem_info_short_get for IMEI, error: %d", err);
+	err = modem_info_string_get(MODEM_INFO_IMEI, imei, 16);
+	if (err != (sizeof(imei) - 1)) {
+		LOG_ERR("modem_info_string_get for IMEI, error: %d", err);
 		return err;
 	}
 	err = modem_info_short_get(MODEM_INFO_RSRP, &rssi);
