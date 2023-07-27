@@ -24,7 +24,9 @@
 #include <hw_id.h>
 #endif
 
+#include "sensor.h"
 
+#define SENSOR_SAMPLE_INTERVAL_MS		1000
 LOG_MODULE_REGISTER(aws_iot_sample, CONFIG_AWS_IOT_SAMPLE_LOG_LEVEL);
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT),
@@ -36,11 +38,71 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT),
 static struct k_work_delayable publish_work;
 static struct k_work_delayable connect_work;
 static struct k_work shadow_update_version_work;
+static struct k_work_delayable sensor_measure_work;
 
 static bool cloud_connected;
 
 static K_SEM_DEFINE(lte_connected, 0, 1);
 static K_SEM_DEFINE(date_time_obtained, 0, 1);
+
+static const struct i2c_dt_spec	tca9548a = I2C_DT_SPEC_GET( DT_NODELABEL( tca9548a_70 ) );
+
+static float lux[8] = {0.0};
+static uint8_t range[8] = {0};
+static uint8_t channel_mask = 0x00;
+
+void sensors_init(void)
+{
+	uint8_t ch;
+
+	check_i2c_device(&tca9548a);
+
+	channel_mask = 0x00;
+
+	for (ch=0; ch<8; ch++){
+		if(tca9548a_set_channel(&tca9548a, ch) == 0){
+			LOG_INF("Channel %d is set\n", ch);
+			
+			if (vl6180_read8(&tca9548a, VL6180X_REG_IDENTIFICATION_MODEL_ID) != 0xB4){
+				LOG_ERR("Vl6180 sensor is failed in Channel %d\n", ch);
+			}
+			else{
+				if(vl6180_read8(&tca9548a, VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET) & 0x01){
+					loadSettings(&tca9548a);
+		 			vl6180_write8( &tca9548a, VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET, 0x00);
+				}
+
+        		channel_mask |= (1 << ch);
+				LOG_INF("Vl6180 sensor in Channel %d was initiated successfully\n", ch);
+			}
+
+		}
+		else{
+			LOG_ERR("Channel %d is failed\n", ch);
+		}
+	}
+}
+
+static void sensor_measure_work_fn(struct k_work *work)
+{
+	uint8_t ch;
+
+	if(channel_mask > 0){
+		for (ch=0; ch<8; ch++){
+			if(channel_mask & (1 << ch)){
+    	    	tca9548a_set_channel(&tca9548a, ch);
+				lux[ch] = vl6180_readLux(&tca9548a, VL6180X_ALS_GAIN_5);
+				range[ch] = vl6180_readRange(&tca9548a);
+				LOG_INF("Data in Channel %d: [lux:] %f, [range:] %d\n", ch, lux, range);
+			}
+		}
+
+		k_work_schedule(&sensor_measure_work, K_MSEC(SENSOR_SAMPLE_INTERVAL_MS));
+	}
+	else {
+		LOG_ERR("Sensor channels are not finded");
+	}
+}
 
 static int json_add_obj(cJSON *parent, const char *str, cJSON *item)
 {
@@ -81,7 +143,7 @@ static int publish_func(bool version_number_include)
 	char *message;
 	int64_t message_ts = 0;
 	int16_t bat_voltage = 0;
-	char imei[16];sorry 
+	char imei[16]; 
 	int16_t rssi = 0;
 	err = date_time_now(&message_ts);
 	if (err) {
@@ -359,6 +421,7 @@ static void work_init(void)
 {
 	k_work_init_delayable(&publish_work, publish_work_fn);
 	k_work_init_delayable(&connect_work, connect_work_fn);
+	k_work_init_delayable(&sensor_measure_work, sensor_measure_work_fn);
 	k_work_init(&shadow_update_version_work, shadow_update_version_work_fn);
 }
 
@@ -524,6 +587,8 @@ int main(void)
 		LOG_ERR("AWS IoT library could not be initialized, error: %d", err);
 	}
 
+	sensors_init();
+
 	/** Subscribe to customizable non-shadow specific topics
 	 *  to AWS IoT backend.
 	 */
@@ -556,6 +621,6 @@ int main(void)
 	/* Postpone connecting to AWS IoT until date time has been obtained. */
 	k_sem_take(&date_time_obtained, K_FOREVER);
 	k_work_schedule(&connect_work, K_NO_WAIT);
-
+	k_work_schedule(&sensor_measure_work, K_NO_WAIT);
 	return 0;
 }
