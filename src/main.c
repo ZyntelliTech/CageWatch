@@ -81,7 +81,7 @@ static int publish_func(bool version_number_include)
 	char *message;
 	int64_t message_ts = 0;
 	int16_t bat_voltage = 0;
-	char imei[16];
+	char imei[16];sorry 
 	int16_t rssi = 0;
 	err = date_time_now(&message_ts);
 	if (err) {

@@ -5,7 +5,7 @@
 
 
 build/*
-
+vl6180_example/build/*
 # User-specific files
 *.rsuser
 *.suo
