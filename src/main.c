@@ -26,7 +26,7 @@
 
 #include "sensor.h"
 
-#define SENSOR_SAMPLE_INTERVAL_MS		1000
+#define SENSOR_SAMPLE_INTERVAL_MS		3000
 LOG_MODULE_REGISTER(aws_iot_sample, CONFIG_AWS_IOT_SAMPLE_LOG_LEVEL);
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT),
@@ -38,7 +38,6 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_LTE_AUTO_INIT_AND_CONNECT),
 static struct k_work_delayable publish_work;
 static struct k_work_delayable connect_work;
 static struct k_work shadow_update_version_work;
-static struct k_work_delayable sensor_measure_work;
 
 static bool cloud_connected;
 
@@ -48,7 +47,7 @@ static K_SEM_DEFINE(date_time_obtained, 0, 1);
 static const struct i2c_dt_spec	tca9548a = I2C_DT_SPEC_GET( DT_NODELABEL( tca9548a_70 ) );
 
 static float lux[8] = {0.0};
-static uint8_t range[8] = {0};
+static int range[8] = {0};
 static uint8_t channel_mask = 0x00;
 
 void sensors_init(void)
@@ -65,6 +64,7 @@ void sensors_init(void)
 			
 			if (vl6180_read8(&tca9548a, VL6180X_REG_IDENTIFICATION_MODEL_ID) != 0xB4){
 				LOG_ERR("Vl6180 sensor is failed in Channel %d\n", ch);
+				range[ch] = -1;
 			}
 			else{
 				if(vl6180_read8(&tca9548a, VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET) & 0x01){
@@ -79,11 +79,49 @@ void sensors_init(void)
 		}
 		else{
 			LOG_ERR("Channel %d is failed\n", ch);
+			range[ch] = -1;
 		}
 	}
 }
 
-static void sensor_measure_work_fn(struct k_work *work)
+void check_sensors(void)
+{
+	uint8_t ch;
+	uint8_t pre_channel_mask;
+
+	check_i2c_device(&tca9548a);
+
+	pre_channel_mask = channel_mask;
+
+	channel_mask = 0x00;
+
+	for (ch=0; ch<8; ch++){
+		if(tca9548a_set_channel(&tca9548a, ch) == 0){
+			LOG_INF("Channel %d is set\n", ch);
+			
+			if (vl6180_read8(&tca9548a, VL6180X_REG_IDENTIFICATION_MODEL_ID) != 0xB4){
+				LOG_ERR("Vl6180 sensor is failed in Channel %d\n", ch);
+				range[ch] = -1;
+			}
+			else{
+				if(((pre_channel_mask >> ch) & 0x01) == 0x00){
+					if(vl6180_read8(&tca9548a, VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET) & 0x01){
+						loadSettings(&tca9548a);
+		 				vl6180_write8( &tca9548a, VL6180X_REG_SYSTEM_FRESH_OUT_OF_RESET, 0x00);
+					}
+				}
+        		channel_mask |= (1 << ch);
+				LOG_INF("Vl6180 sensor in Channel %d was initiated successfully\n", ch);
+			}
+
+		}
+		else{
+			LOG_ERR("Channel %d is failed\n", ch);
+			range[ch] = -1;
+		}
+	}
+}
+static void sensor_measure_fn(void)
 {
 	uint8_t ch;
 
@@ -93,11 +131,9 @@ static void sensor_measure_work_fn(struct k_work *work)
     	    	tca9548a_set_channel(&tca9548a, ch);
 				lux[ch] = vl6180_readLux(&tca9548a, VL6180X_ALS_GAIN_5);
 				range[ch] = vl6180_readRange(&tca9548a);
-				LOG_INF("Data in Channel %d: [lux:] %f, [range:] %d\n", ch, lux, range);
+				LOG_INF("Data in Channel %d: [lux:] %f, [range:] %d\n", ch, lux[ch], range[ch]);
 			}
 		}
-
-		k_work_schedule(&sensor_measure_work, K_MSEC(SENSOR_SAMPLE_INTERVAL_MS));
 	}
 	else {
 		LOG_ERR("Sensor channels are not finded");
@@ -145,11 +181,17 @@ static int publish_func(bool version_number_include)
 	int16_t bat_voltage = 0;
 	char imei[16]; 
 	int16_t rssi = 0;
+	uint8_t ch = 0;
+
 	err = date_time_now(&message_ts);
 	if (err) {
 		LOG_ERR("date_time_now, error: %d", err);
 		return err;
 	}
+
+	check_sensors();
+
+	sensor_measure_fn();
 
 #if defined(CONFIG_NRF_MODEM_LIB)
 	/* Request battery voltage data from the modem. */
@@ -168,30 +210,43 @@ static int publish_func(bool version_number_include)
 		LOG_ERR("modem_info_short_get for RSSI, error: %d", err);
 		return err;
 	}
+
+	rssi = (-140) + rssi; 
 #endif
 
 	cJSON *root_obj = cJSON_CreateObject();
-	cJSON *imei_obj = cJSON_CreateObject();
-	cJSON *firmware_obj = cJSON_CreateObject();
-	cJSON *hardware_obj = cJSON_CreateObject();
-	cJSON *battery_obj = cJSON_CreateObject();
-	cJSON *rssi_obj = cJSON_CreateObject();
+	cJSON *data_obj = cJSON_CreateObject();
+	
 
-	if (root_obj == NULL || imei_obj == NULL || firmware_obj == NULL || hardware_obj == NULL || battery_obj == NULL || rssi_obj == NULL) {
-		cJSON_Delete(imei_obj);
-		cJSON_Delete(firmware_obj);
-		cJSON_Delete(hardware_obj);
-		cJSON_Delete(battery_obj);
-		cJSON_Delete(rssi_obj);
+	if (root_obj == NULL || data_obj == NULL)
+	{
+		cJSON_Delete(data_obj);
+		cJSON_Delete(root_obj);
 		err = -ENOMEM;
 		return err;
 	}
 
+	err = 0;
+
 	err += json_add_str(root_obj, "imei", imei);
-	err = json_add_str(root_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
+	err += json_add_str(root_obj, "firmware_version", CONFIG_FIRMWARE_VERSION);
 	err += json_add_str(root_obj, "hardware_version", CONFIG_HARDWARE_VERSION);
 	err += json_add_number(root_obj, "battery_voltage", bat_voltage);
 	err += json_add_number(root_obj, "cellular_rssi", rssi);
+
+
+	err += json_add_number(data_obj, "ch0", range[0]);	
+	err += json_add_number(data_obj, "ch1", range[1]);	
+	err += json_add_number(data_obj, "ch2", range[2]);	
+	err += json_add_number(data_obj, "ch3", range[3]);	
+	err += json_add_number(data_obj, "ch4", range[4]);	
+	err += json_add_number(data_obj, "ch5", range[5]);	
+	err += json_add_number(data_obj, "ch6", range[6]);	
+	err += json_add_number(data_obj, "ch7", range[7]);	
+	
+
+	err += json_add_obj(root_obj, "data", data_obj);
+	
 
 	if (err) {
 		LOG_ERR("json_add, error: %d", err);
@@ -421,7 +476,6 @@ static void work_init(void)
 {
 	k_work_init_delayable(&publish_work, publish_work_fn);
 	k_work_init_delayable(&connect_work, connect_work_fn);
-	k_work_init_delayable(&sensor_measure_work, sensor_measure_work_fn);
 	k_work_init(&shadow_update_version_work, shadow_update_version_work_fn);
 }
 
@@ -621,6 +675,5 @@ int main(void)
 	/* Postpone connecting to AWS IoT until date time has been obtained. */
 	k_sem_take(&date_time_obtained, K_FOREVER);
 	k_work_schedule(&connect_work, K_NO_WAIT);
-	k_work_schedule(&sensor_measure_work, K_NO_WAIT);
 	return 0;
 }
