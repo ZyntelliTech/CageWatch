@@ -20,11 +20,16 @@
 #include <cJSON.h>
 #include <cJSON_os.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/gpio.h>
+
 #if defined(CONFIG_AWS_IOT_SAMPLE_DEVICE_ID_USE_HW_ID)
 #include <hw_id.h>
 #endif
 
 #include "sensor.h"
+
+#define I2C_RST			DT_ALIAS(rstpin)
+#define ENABLE_3V6 		DT_ALIAS(enable3v6)
 
 #define SENSOR_SAMPLE_INTERVAL_MS		3000
 LOG_MODULE_REGISTER(aws_iot_sample, CONFIG_AWS_IOT_SAMPLE_LOG_LEVEL);
@@ -45,6 +50,8 @@ static K_SEM_DEFINE(lte_connected, 0, 1);
 static K_SEM_DEFINE(date_time_obtained, 0, 1);
 
 static const struct i2c_dt_spec	tca9548a = I2C_DT_SPEC_GET( DT_NODELABEL( tca9548a_70 ) );
+static const struct gpio_dt_spec i2c_rst_dt = GPIO_DT_SPEC_GET(I2C_RST, gpios);
+static const struct gpio_dt_spec enable_3v6_dt = GPIO_DT_SPEC_GET(ENABLE_3V6, gpios);
 
 static float lux[8] = {0.0};
 static int range[8] = {0};
@@ -52,7 +59,22 @@ static uint8_t channel_mask = 0x00;
 
 void sensors_init(void)
 {
-	uint8_t ch;
+	uint8_t ch, ret;
+
+	if (!gpio_is_ready_dt(&i2c_rst_dt)) {
+		return 0;
+	}
+
+	ret = gpio_pin_configure_dt(&i2c_rst_dt, GPIO_OUTPUT_HIGH);
+	if (ret < 0) {
+		return 0;
+	}
+
+	ret = gpio_pin_configure_dt(&enable_3v6_dt, GPIO_OUTPUT_HIGH);
+	if (ret < 0) {
+		return 0;
+	}
+
 
 	check_i2c_device(&tca9548a);
 
